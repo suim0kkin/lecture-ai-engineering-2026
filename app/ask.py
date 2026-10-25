@@ -1,19 +1,17 @@
-"""第1回: 素のLLMに1回だけ質問するスクリプト。
+"""第1回: 素のLLMと継続して会話できる対話型スクリプト。
 
 使い方:
     uv run python -m app.ask "LoRAとは何ですか？"
-    uv run python -m app.ask            # 質問を省略すると、講座に固有の質問をする
+    uv run python -m app.ask            # 質問を省略すると、既定の質問または対話プロンプトを開始
 
-ツールも会話履歴も持たない「素の」呼び出し。
-講座に固有のことを聞くと、「分からない」と答えるか、一般論でもっともらしく答える
-（講座の実際とは違う）ことを確かめよう。
-（第3回で、用語集を検索できるエージェントにして改善する）
+会話履歴を保持しながら、'exit' や 'quit' を入力するまで続けて質問できる。
 """
 
 import argparse
 
 from google import genai
 from google.genai import errors
+from google.genai.types import GenerateContentResponseUsageMetadata
 
 from app.config import MODEL, api_error_message, get_api_key
 
@@ -21,28 +19,73 @@ from app.config import MODEL, api_error_message, get_api_key
 DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何ですか？"
 
 
+def format_token_usage(usage: GenerateContentResponseUsageMetadata | None) -> str:
+    """利用トークン数のメタデータを可視化文字列に整形する。"""
+    if not usage:
+        return "[トークン] メタデータなし"
+    return f"[トークン] 入力: {usage.prompt_token_count} / 出力: {usage.candidates_token_count}"
+
+
 def ask(question: str) -> str:
+    """単発の質問を実行し、回答とトークン数を返す（後方互換用）。"""
     client = genai.Client(api_key=get_api_key())
     response = client.models.generate_content(model=MODEL, contents=question)
 
-    # TODO(第1回 演習): response.usage_metadata から
-    #   入力トークン数と出力トークン数を表示してみよう（Copilotに頼んでよい）
+    token_info = format_token_usage(response.usage_metadata)
+    print(token_info)
 
-    return response.text
+    return response.text or ""
+
+
+def chat_loop(initial_question: str | None = None) -> None:
+    """会話履歴を保持したまま継続して質問できる対話セッションを実行する。"""
+    # Google GenAI SDK の chats.create によりクライアント側で会話履歴（History）を安全に保持
+    client = genai.Client(api_key=get_api_key())
+    chat_session = client.chats.create(model=MODEL)
+
+    current_question = initial_question
+
+    print("対話モードを開始しました ('exit' または 'quit' で終了します)")
+    print("-" * 50)
+
+    while True:
+        if current_question is None:
+            try:
+                user_input = input("\n[あなた] ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n対話を終了します。")
+                break
+
+            if not user_input:
+                continue
+
+            if user_input.lower() in ("exit", "quit", "q"):
+                print("対話を終了します。")
+                break
+
+            current_question = user_input
+
+        print(f"\n[質問] {current_question}\n")
+
+        try:
+            response = chat_session.send_message(current_question)
+            print(f"[回答]\n{response.text}\n")
+            print(format_token_usage(response.usage_metadata))
+        except errors.APIError as e:
+            print(api_error_message(e.code, e.message))
+            break
+
+        # 初回質問の処理が終わったら次からは対話入力に切り替え
+        current_question = None
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="素のLLMに質問する")
-    parser.add_argument("question", nargs="?", default=DEFAULT_QUESTION)
+    parser = argparse.ArgumentParser(description="LLMと継続して対話する")
+    parser.add_argument("question", nargs="?", default=None, help="最初の質問（省略時は対話入力待ち）")
     args = parser.parse_args()
 
     print(f"[model] {MODEL}")
-    print(f"[質問] {args.question}\n")
-    try:
-        print(ask(args.question))
-    except errors.APIError as e:
-        print(api_error_message(e.code, e.message))
-        raise SystemExit(1)
+    chat_loop(initial_question=args.question)
 
 
 if __name__ == "__main__":
