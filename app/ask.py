@@ -2,7 +2,7 @@
 
 使い方:
     uv run python -m app.ask "LoRAとは何ですか？"
-    uv run python -m app.ask            # 質問を省略すると、既定の質問または対話プロンプトを開始
+    uv run python -m app.ask            # 質問を省略すると、講座に固有の質問で開始
 
 会話履歴を保持しながら、'exit' や 'quit' を入力するまで続けて質問できる。
 """
@@ -22,8 +22,13 @@ DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何�
 def format_token_usage(usage: GenerateContentResponseUsageMetadata | None) -> str:
     """利用トークン数のメタデータを可視化文字列に整形する。"""
     if not usage:
-        return "[トークン] メタデータなし"
-    return f"[トークン] 入力: {usage.prompt_token_count} / 出力: {usage.candidates_token_count}"
+        return "[トークン情報] 取得できませんでした"
+    prompt = usage.prompt_token_count or 0
+    candidates = usage.candidates_token_count or 0
+    total = getattr(usage, "total_token_count", prompt + candidates)
+    return (
+        f"[トークン消費] 入力: {prompt} | 出力: {candidates} | 合計: {total}"
+    )
 
 
 def ask(question: str) -> str:
@@ -31,8 +36,9 @@ def ask(question: str) -> str:
     client = genai.Client(api_key=get_api_key())
     response = client.models.generate_content(model=MODEL, contents=question)
 
-    token_info = format_token_usage(response.usage_metadata)
-    print(token_info)
+    print("-" * 50)
+    print(format_token_usage(response.usage_metadata))
+    print("-" * 50)
 
     return response.text or ""
 
@@ -45,8 +51,10 @@ def chat_loop(initial_question: str | None = None) -> None:
 
     current_question = initial_question
 
-    print("対話モードを開始しました ('exit' または 'quit' で終了します)")
-    print("-" * 50)
+    print("=" * 60)
+    print("対話モードを開始しました ('exit' または 'quit' で終了)")
+    print("会話履歴が保持されるため、過去の文脈を踏まえて続けて質問できます。")
+    print("=" * 60)
 
     while True:
         if current_question is None:
@@ -70,7 +78,9 @@ def chat_loop(initial_question: str | None = None) -> None:
         try:
             response = chat_session.send_message(current_question)
             print(f"[回答]\n{response.text}\n")
+            print("-" * 50)
             print(format_token_usage(response.usage_metadata))
+            print("-" * 50)
         except errors.APIError as e:
             print(api_error_message(e.code, e.message))
             break
@@ -81,7 +91,12 @@ def chat_loop(initial_question: str | None = None) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="LLMと継続して対話する")
-    parser.add_argument("question", nargs="?", default=None, help="最初の質問（省略時は対話入力待ち）")
+    parser.add_argument(
+        "question",
+        nargs="?",
+        default=DEFAULT_QUESTION,
+        help=f"最初の質問（省略時は '{DEFAULT_QUESTION}'）",
+    )
     args = parser.parse_args()
 
     print(f"[model] {MODEL}")
