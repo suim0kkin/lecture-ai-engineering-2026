@@ -22,13 +22,11 @@ DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何�
 def format_token_usage(usage: GenerateContentResponseUsageMetadata | None) -> str:
     """利用トークン数のメタデータを可視化文字列に整形する。"""
     if not usage:
-        return "[トークン情報] 取得できませんでした"
-    prompt = usage.prompt_token_count or 0
-    candidates = usage.candidates_token_count or 0
+        return "[トークン数] メタデータを取得できませんでした"
+    prompt = getattr(usage, "prompt_token_count", 0)
+    candidates = getattr(usage, "candidates_token_count", 0)
     total = getattr(usage, "total_token_count", prompt + candidates)
-    return (
-        f"[トークン消費] 入力: {prompt} | 出力: {candidates} | 合計: {total}"
-    )
+    return f"[トークン数] 入力: {prompt} / 出力: {candidates} (合計: {total})"
 
 
 def ask(question: str) -> str:
